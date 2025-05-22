@@ -8,6 +8,7 @@ A Telegram bot that allows users to sell Bitcoin via Lightning Network using BTC
 - Create Bitcoin sell offers with Lightning Network invoices
 - List and check status of your offers
 - Marketplace to browse all available offers from all users
+- Payment confirmation system to release funds
 - Integration with BTCPay Server for Lightning Network payments
 - Interactive buttons for easier navigation
 - Markdown-formatted messages for better readability
@@ -88,7 +89,8 @@ The bot provides an interactive interface with buttons for easier navigation:
 - **Invoice Links**: Each offer includes a button to view the Lightning Network invoice
 - **Marketplace**: Browse all available offers from other users and contact sellers directly
 - **Formatted Messages**: All messages use emoji and formatting for better readability
-- **Status Updates**: Offer status is clearly indicated with emoji (✅ Paid or ⏳ Pending)
+- **Status Updates**: Offer status is clearly indicated with emoji (⏳ Pending, 💰 Paid, ✅ Completed, ❌ Cancelled)
+- **Payment Confirmation**: Sellers can confirm when they've received payment, releasing funds to the buyer
 
 ## Marketplace
 
@@ -99,6 +101,23 @@ The marketplace feature allows users to:
 - Contact sellers directly via Telegram
 - See offer details including amount, price, and date
 - Only active (non-paid) offers are displayed in the marketplace
+
+## Payment Flow
+
+The payment process works as follows:
+
+1. **Create Offer**: Seller creates an offer to sell Bitcoin
+2. **Find Buyer**: Buyer finds the offer in the marketplace and contacts the seller
+3. **Payment**: Buyer sends payment to the seller via their preferred method
+4. **Confirmation**: Seller confirms receipt of payment using the "Confirm Payment Received" button
+5. **Completion**: The offer is marked as completed, and funds are released
+
+### Offer Statuses
+
+- **⏳ Pending**: Offer is active and waiting for payment
+- **💰 Paid**: Payment has been detected but not yet confirmed by the seller
+- **✅ Completed**: Payment has been confirmed by the seller and funds released
+- **❌ Cancelled**: Offer has been cancelled by the seller
 
 ## License
 

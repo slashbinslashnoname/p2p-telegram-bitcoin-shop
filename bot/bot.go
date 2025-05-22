@@ -20,6 +20,10 @@ const (
 	btnListOffers  = "list_offers"
 	btnMarketplace = "marketplace"
 	btnHelp        = "help"
+	
+	// Callback prefixes
+	cbConfirmPayment = "confirm_payment:"
+	cbCancelOffer    = "cancel_offer:"
 )
 
 // Bot represents the Telegram bot with its dependencies
@@ -177,20 +181,45 @@ func (b *Bot) listOffers(m *telebot.Message) error {
 		return nil
 	}
 
-	var response strings.Builder
-	response.WriteString("📋 *Your offers:*\n\n")
+	// Send header message
+	b.teleBot.Send(m.Sender, "📋 *Your offers:*", telebot.ModeMarkdown)
 	
 	// Create a menu for each offer
 	for i, o := range offers {
-		// Check payment status
-		paid, err := b.btcpay.CheckInvoiceStatus(o.InvoiceID)
-		if err != nil {
-			log.Printf("Failed to check invoice status for offer %d: %v", o.ID, err)
+		// Check if the offer is already completed or cancelled
+		if o.Status == models.StatusCompleted || o.Status == models.StatusCancelled {
+			continue // Skip completed or cancelled offers
 		}
 		
-		status := "⏳ Pending"
-		if paid {
-			status = "✅ Paid"
+		// Check payment status if the offer is still pending
+		isPaid := false
+		if o.Status == models.StatusPending {
+			paid, err := b.btcpay.CheckInvoiceStatus(o.InvoiceID)
+			if err != nil {
+				log.Printf("Failed to check invoice status for offer %d: %v", o.ID, err)
+			}
+			
+			// If the invoice is paid but the status is still pending, update it
+			if paid && o.Status == models.StatusPending {
+				if err := b.database.UpdateOfferStatus(o.ID, models.StatusPaid); err != nil {
+					log.Printf("Failed to update offer status: %v", err)
+				} else {
+					o.Status = models.StatusPaid
+				}
+				isPaid = true
+			}
+		} else if o.Status == models.StatusPaid {
+			isPaid = true
+		}
+		
+		// Determine status emoji
+		statusEmoji := "⏳"
+		if o.Status == models.StatusPaid {
+			statusEmoji = "💰"
+		} else if o.Status == models.StatusCompleted {
+			statusEmoji = "✅"
+		} else if o.Status == models.StatusCancelled {
+			statusEmoji = "❌"
 		}
 		
 		// Format the offer details
@@ -199,29 +228,159 @@ func (b *Bot) listOffers(m *telebot.Message) error {
 			"🔹 Amount: %f BTC\n"+
 			"🔹 Price: $%f\n"+
 			"🔹 Date: %s\n"+
-			"🔹 Status: %s\n\n",
-			o.ID, o.AmountBTC, o.PriceUSD, o.CreatedAt.Format(time.RFC822), status)
+			"🔹 Status: %s %s\n",
+			o.ID, o.AmountBTC, o.PriceUSD, o.CreatedAt.Format(time.RFC822), statusEmoji, o.Status)
 		
-		response.WriteString(offerDetails)
+		// Create buttons based on offer status
+		menu := &telebot.ReplyMarkup{}
+		var buttons []telebot.InlineButton
 		
-		// Create a button to view the invoice for each offer
-		if i < 5 { // Limit to 5 offers with buttons to avoid Telegram API limits
-			menu := &telebot.ReplyMarkup{}
-			btnViewInvoice := &telebot.InlineButton{
-				Text: fmt.Sprintf("View Invoice #%d", o.ID),
-				URL:  o.InvoiceLink,
+		// View invoice button
+		btnViewInvoice := telebot.InlineButton{
+			Text: "View Invoice",
+			URL:  o.InvoiceLink,
+		}
+		buttons = append(buttons, btnViewInvoice)
+		
+		// If the offer is paid, add confirm payment button
+		if isPaid {
+			btnConfirmPayment := telebot.InlineButton{
+				Text:   "✅ Confirm Payment Received",
+				Unique: fmt.Sprintf("%s%d", cbConfirmPayment, o.ID),
 			}
-			menu.InlineKeyboard = [][]telebot.InlineButton{{*btnViewInvoice}}
-			
-			// Send each offer as a separate message with its own button
+			buttons = append(buttons, btnConfirmPayment)
+		}
+		
+		// Cancel offer button
+		if o.Status == models.StatusPending {
+			btnCancelOffer := telebot.InlineButton{
+				Text:   "❌ Cancel Offer",
+				Unique: fmt.Sprintf("%s%d", cbCancelOffer, o.ID),
+			}
+			buttons = append(buttons, btnCancelOffer)
+		}
+		
+		// Add buttons to the menu
+		menu.InlineKeyboard = [][]telebot.InlineButton{buttons}
+		
+		// Send each offer as a separate message with its own buttons
+		if i < 10 { // Limit to 10 offers to avoid Telegram API limits
 			b.teleBot.Send(m.Sender, offerDetails, menu, telebot.ModeMarkdown)
 		}
 	}
 	
-	// If there are more than 5 offers, send a summary message
-	if len(offers) > 5 {
-		b.teleBot.Send(m.Sender, fmt.Sprintf("Showing buttons for the first 5 offers. You have a total of %d offers.", len(offers)))
+	// If there are more than 10 offers, send a summary message
+	if len(offers) > 10 {
+		b.teleBot.Send(m.Sender, fmt.Sprintf("Showing buttons for the first 10 offers. You have a total of %d offers.", len(offers)))
 	}
+	
+	return nil
+}
+
+// confirmPayment confirms that payment has been received for an offer
+func (b *Bot) confirmPayment(c *telebot.Callback) error {
+	// Extract offer ID from callback data
+	idStr := strings.TrimPrefix(c.Data, cbConfirmPayment)
+	offerID, err := strconv.Atoi(idStr)
+	if err != nil {
+		return fmt.Errorf("invalid offer ID: %v", err)
+	}
+	
+	// Get the offer
+	offer, err := b.database.GetOffer(offerID)
+	if err != nil {
+		return fmt.Errorf("failed to get offer: %v", err)
+	}
+	
+	// Check if the user is the owner of the offer
+	if offer.UserID != c.Sender.ID {
+		b.teleBot.Respond(c, &telebot.CallbackResponse{
+			Text:      "You are not authorized to confirm this payment",
+			ShowAlert: true,
+		})
+		return fmt.Errorf("unauthorized attempt to confirm payment for offer %d by user %d", offerID, c.Sender.ID)
+	}
+	
+	// Check if the offer is in the correct status
+	if offer.Status != models.StatusPaid {
+		b.teleBot.Respond(c, &telebot.CallbackResponse{
+			Text:      "This offer is not in the paid status",
+			ShowAlert: true,
+		})
+		return fmt.Errorf("attempt to confirm payment for offer %d with status %s", offerID, offer.Status)
+	}
+	
+	// Update the offer status
+	if err := b.database.UpdateOfferStatus(offerID, models.StatusCompleted); err != nil {
+		b.teleBot.Respond(c, &telebot.CallbackResponse{
+			Text:      "Failed to update offer status",
+			ShowAlert: true,
+		})
+		return fmt.Errorf("failed to update offer status: %v", err)
+	}
+	
+	// Respond to the callback
+	b.teleBot.Respond(c, &telebot.CallbackResponse{
+		Text: "Payment confirmed! Funds have been released.",
+	})
+	
+	// Send a confirmation message
+	confirmMsg := fmt.Sprintf("✅ *Payment Confirmed*\n\nYou have confirmed receipt of payment for Offer #%d.\nThe transaction is now complete and funds have been released.", offerID)
+	b.teleBot.Send(c.Sender, confirmMsg, telebot.ModeMarkdown)
+	
+	return nil
+}
+
+// cancelOffer cancels an offer
+func (b *Bot) cancelOffer(c *telebot.Callback) error {
+	// Extract offer ID from callback data
+	idStr := strings.TrimPrefix(c.Data, cbCancelOffer)
+	offerID, err := strconv.Atoi(idStr)
+	if err != nil {
+		return fmt.Errorf("invalid offer ID: %v", err)
+	}
+	
+	// Get the offer
+	offer, err := b.database.GetOffer(offerID)
+	if err != nil {
+		return fmt.Errorf("failed to get offer: %v", err)
+	}
+	
+	// Check if the user is the owner of the offer
+	if offer.UserID != c.Sender.ID {
+		b.teleBot.Respond(c, &telebot.CallbackResponse{
+			Text:      "You are not authorized to cancel this offer",
+			ShowAlert: true,
+		})
+		return fmt.Errorf("unauthorized attempt to cancel offer %d by user %d", offerID, c.Sender.ID)
+	}
+	
+	// Check if the offer is in the correct status
+	if offer.Status != models.StatusPending {
+		b.teleBot.Respond(c, &telebot.CallbackResponse{
+			Text:      "Only pending offers can be cancelled",
+			ShowAlert: true,
+		})
+		return fmt.Errorf("attempt to cancel offer %d with status %s", offerID, offer.Status)
+	}
+	
+	// Update the offer status
+	if err := b.database.UpdateOfferStatus(offerID, models.StatusCancelled); err != nil {
+		b.teleBot.Respond(c, &telebot.CallbackResponse{
+			Text:      "Failed to cancel offer",
+			ShowAlert: true,
+		})
+		return fmt.Errorf("failed to update offer status: %v", err)
+	}
+	
+	// Respond to the callback
+	b.teleBot.Respond(c, &telebot.CallbackResponse{
+		Text: "Offer cancelled successfully.",
+	})
+	
+	// Send a confirmation message
+	cancelMsg := fmt.Sprintf("❌ *Offer Cancelled*\n\nYou have cancelled Offer #%d.", offerID)
+	b.teleBot.Send(c.Sender, cancelMsg, telebot.ModeMarkdown)
 	
 	return nil
 }
@@ -246,7 +405,16 @@ func (b *Bot) showMarketplace(m *telebot.Message) error {
 	// Group offers by seller to avoid spam
 	sellerOffers := make(map[int64][]models.Offer)
 	for _, o := range offers {
-		sellerOffers[o.UserID] = append(sellerOffers[o.UserID], o)
+		// Only include pending offers in the marketplace
+		if o.Status == models.StatusPending {
+			sellerOffers[o.UserID] = append(sellerOffers[o.UserID], o)
+		}
+	}
+	
+	// If no pending offers, show a message
+	if len(sellerOffers) == 0 {
+		b.teleBot.Send(m.Sender, "No active offers available in the marketplace right now.")
+		return nil
 	}
 	
 	// Send offers grouped by seller
@@ -263,17 +431,6 @@ func (b *Bot) showMarketplace(m *telebot.Message) error {
 		
 		// Add each offer from this seller
 		for _, o := range userOffers {
-			// Check payment status
-			paid, err := b.btcpay.CheckInvoiceStatus(o.InvoiceID)
-			if err != nil {
-				log.Printf("Failed to check invoice status for offer %d: %v", o.ID, err)
-			}
-			
-			// Skip paid offers in the marketplace
-			if paid {
-				continue
-			}
-			
 			// Format the offer details
 			sellerMsg.WriteString(fmt.Sprintf(
 				"*Offer #%d*\n"+
@@ -314,6 +471,13 @@ func (b *Bot) showHelp(m *telebot.Message) {
 2. Create an offer with /sell or use the button
 3. View your offers with /list or use the button
 4. Browse available offers in the marketplace
+5. When you receive payment, confirm it to release funds
+
+*Offer Status:*
+⏳ Pending - Waiting for payment
+💰 Paid - Payment received but not confirmed
+✅ Completed - Payment confirmed, funds released
+❌ Cancelled - Offer cancelled
 
 *Need more help?*
 Contact support at @YourSupportUsername`
@@ -346,6 +510,19 @@ func (b *Bot) Start() {
 	b.teleBot.Handle(&telebot.InlineButton{Unique: btnHelp}, func(c *telebot.Callback) {
 		b.teleBot.Respond(c, &telebot.CallbackResponse{})
 		b.showHelp(&telebot.Message{Sender: c.Sender})
+	})
+	
+	// Register handlers for confirm payment and cancel offer callbacks
+	b.teleBot.Handle(telebot.OnCallback, func(c *telebot.Callback) {
+		if strings.HasPrefix(c.Data, cbConfirmPayment) {
+			if err := b.confirmPayment(c); err != nil {
+				log.Printf("Error confirming payment: %v", err)
+			}
+		} else if strings.HasPrefix(c.Data, cbCancelOffer) {
+			if err := b.cancelOffer(c); err != nil {
+				log.Printf("Error cancelling offer: %v", err)
+			}
+		}
 	})
 
 	// Register command handlers
