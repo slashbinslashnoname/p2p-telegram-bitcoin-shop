@@ -22,10 +22,25 @@ A Telegram bot that allows users to sell Bitcoin via Lightning Network using BTC
 ├── go.mod          # Go module file
 ├── go.sum          # Go dependencies checksum
 ├── .env            # Environment variables (create this file)
+├── setup.sh        # Setup script to create .env file
 └── README.md       # This file
 ```
 
 ## Configuration
+
+You can configure the application in two ways:
+
+### Option 1: Using the setup script
+
+Run the setup script to create the `.env` file:
+
+```bash
+./setup.sh
+```
+
+This script will prompt you for the necessary configuration values and create the `.env` file for you.
+
+### Option 2: Manual configuration
 
 Create a `.env` file in the root directory with the following variables:
 
