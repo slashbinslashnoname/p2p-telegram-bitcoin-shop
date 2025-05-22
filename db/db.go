@@ -99,6 +99,32 @@ func (d *Database) GetUserOffers(userID int64) ([]models.Offer, error) {
 	return offers, nil
 }
 
+// GetAllOffers retrieves all offers from all users, with optional limit
+func (d *Database) GetAllOffers(limit int) ([]models.Offer, error) {
+	query := "SELECT o.id, o.user_id, u.username, o.amount_btc, o.price_usd, o.invoice_id, o.invoice_link, o.created_at FROM offers o JOIN users u ON o.user_id = u.user_id ORDER BY o.created_at DESC"
+	
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", limit)
+	}
+	
+	rows, err := d.db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch all offers: %v", err)
+	}
+	defer rows.Close()
+
+	var offers []models.Offer
+	for rows.Next() {
+		var o models.Offer
+		if err := rows.Scan(&o.ID, &o.UserID, &o.Username, &o.AmountBTC, &o.PriceUSD, &o.InvoiceID, &o.InvoiceLink, &o.CreatedAt); err != nil {
+			continue
+		}
+		offers = append(offers, o)
+	}
+
+	return offers, nil
+}
+
 // Close closes the database connection
 func (d *Database) Close() error {
 	return d.db.Close()

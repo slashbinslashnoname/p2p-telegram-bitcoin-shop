@@ -7,7 +7,10 @@ A Telegram bot that allows users to sell Bitcoin via Lightning Network using BTC
 - User registration
 - Create Bitcoin sell offers with Lightning Network invoices
 - List and check status of your offers
+- Marketplace to browse all available offers from all users
 - Integration with BTCPay Server for Lightning Network payments
+- Interactive buttons for easier navigation
+- Markdown-formatted messages for better readability
 
 ## Project Structure
 
@@ -69,11 +72,33 @@ go build -o btc-shop
 ./btc-shop
 ```
 
-## Bot Commands
+## Bot Commands and Interface
 
-- `/start` - Register as a user
+The bot provides an interactive interface with buttons for easier navigation:
+
+- `/start` - Register as a user and show the main menu with buttons
 - `/sell <amount_btc> <price_usd>` - Create a sell offer
-- `/list` - List your offers
+- `/list` - List your offers with buttons to view invoices
+- `/marketplace` - Browse all available offers from all users
+- `/help` - Show help information
+
+### Interactive Features
+
+- **Main Menu**: After registration, users see a menu with buttons for creating offers, viewing offers, browsing the marketplace, and getting help
+- **Invoice Links**: Each offer includes a button to view the Lightning Network invoice
+- **Marketplace**: Browse all available offers from other users and contact sellers directly
+- **Formatted Messages**: All messages use emoji and formatting for better readability
+- **Status Updates**: Offer status is clearly indicated with emoji (✅ Paid or ⏳ Pending)
+
+## Marketplace
+
+The marketplace feature allows users to:
+
+- Browse all available offers from all users
+- View offers grouped by seller
+- Contact sellers directly via Telegram
+- See offer details including amount, price, and date
+- Only active (non-paid) offers are displayed in the marketplace
 
 ## License
 
